@@ -58,6 +58,20 @@ prompt_secret() {
   printf '%s' "$value"
 }
 
+prompt_required_secret() {
+  local prompt="$1"
+  local value
+
+  while true; do
+    value="$(prompt_secret "$prompt")"
+    if [ -n "$value" ]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    say "Input was empty. Paste your key, then press Enter. The key will not be shown while typing."
+  done
+}
+
 confirm() {
   local prompt="$1"
   local default="${2:-Y}"
@@ -286,8 +300,8 @@ main() {
   model="$(prompt_default 'Model name' 'MiniMax-M2.7')"
 
   local api_key
-  api_key="$(prompt_secret 'MiniMax API Key')"
-  [ -n "$api_key" ] || die "API key cannot be empty."
+  say "MiniMax API Key input is hidden. Paste the key, then press Enter."
+  api_key="$(prompt_required_secret 'MiniMax API Key')"
 
   say
   say "Choose Claude Code connection mode:"
