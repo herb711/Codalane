@@ -11,7 +11,7 @@ This project is not affiliated with Anthropic, MiniMax, or CC Switch.
 Review the script before running it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/herb711/Codalane/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/herb711/C-Code-Switch/main/install.sh -o install.sh
 less install.sh
 bash install.sh
 ```
@@ -19,7 +19,7 @@ bash install.sh
 One-line install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/herb711/Codalane/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/herb711/C-Code-Switch/main/install.sh | bash
 ```
 
 ## What It Does
