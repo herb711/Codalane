@@ -40,6 +40,14 @@ die() {
   exit 1
 }
 
+warn() {
+  if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+    printf '\033[33mWarning: %s\033[0m\n' "$*" >&2
+  else
+    printf 'Warning: %s\n' "$*" >&2
+  fi
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -168,6 +176,40 @@ append_model_if_missing() {
   models_ref+=("$candidate")
 }
 
+merge_live_models_preserving_remote_order() {
+  local -n models_ref="$1"
+  shift
+  local candidate existing already
+  local batch=()
+
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    already=0
+    for existing in "${batch[@]}"; do
+      if [ "$existing" = "$candidate" ]; then
+        already=1
+        break
+      fi
+    done
+    [ "$already" = "0" ] && batch+=("$candidate")
+  done
+
+  for existing in "${models_ref[@]}"; do
+    already=0
+    for candidate in "${batch[@]}"; do
+      if [ "$candidate" = "$existing" ]; then
+        already=1
+        break
+      fi
+    done
+    [ "$already" = "0" ] && batch+=("$existing")
+  done
+
+  if [ "${#batch[@]}" -gt 0 ]; then
+    models_ref=("${batch[@]}")
+  fi
+}
+
 model_history_candidates() {
   local file="${1:-}"
   local provider="${2:-}"
@@ -242,7 +284,9 @@ claude_configured_models() {
 model_note() {
   local model="$1"
 
-  if [ "$model" = "MiniMax-M2.7" ]; then
+  if [ "$model" = "MiniMax-M3" ]; then
+    printf '%s' "recommended, 1M context"
+  elif [ "$model" = "MiniMax-M2.7" ]; then
     printf '%s' "recommended"
   elif [ "$model" = "MiniMax-M2.7-highspeed" ]; then
     printf '%s' "high-speed, separate quota"
@@ -284,6 +328,7 @@ select_model_menu() {
   case "${provider}:${kind}" in
     minimax:primary|minimax:small)
       models=(
+        "MiniMax-M3"
         "MiniMax-M2.7"
         "MiniMax-M2.7-highspeed"
         "MiniMax-M2.5"
@@ -292,6 +337,29 @@ select_model_menu() {
         "MiniMax-M2.1-highspeed"
         "MiniMax-M2"
       )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_anthropic_models >/dev/null && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_anthropic_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -z "$live_models" ]; then
+          live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        fi
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              MiniMax-M*|abab*) live_classified+=("$live_model") ;;
+              speech-*|voice-*) live_classified+=("${live_model} [speech]") ;;
+              image-*) live_classified+=("${live_model} [image]") ;;
+              music-*|lyrics-*) live_classified+=("${live_model} [music]") ;;
+              video-*|MiniMax-Hailuo*) live_classified+=("${live_model} [video]") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from MiniMax (using built-in list instead)"
+        fi
+      fi
       ;;
     deepseek:primary)
       models=(
@@ -299,6 +367,22 @@ select_model_menu() {
         "deepseek-v4-pro"
         "deepseek-v4-flash"
       )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              deepseek-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from DeepSeek (using built-in list instead)"
+        fi
+      fi
       ;;
     deepseek:small)
       models=(
@@ -317,6 +401,66 @@ select_model_menu() {
         "kimi-k2-0905-preview"
         "kimi-k2-0711-preview"
       )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              moonshot-*|kimi-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from Moonshot Kimi (using built-in list instead)"
+        fi
+      fi
+      ;;
+    zhipu:primary|zhipu:small)
+      models=(
+        "glm-5"
+        "glm-5-turbo"
+        "glm-5.1"
+      )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              glm-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from Zhipu GLM (using built-in list instead)"
+        fi
+      fi
+      ;;
+    mimo:primary|mimo:small)
+      models=(
+        "mimo-v2.5-pro"
+      )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              mimo-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from Xiaomi MiMo (using built-in list instead)"
+        fi
+      fi
       ;;
     *)
       printf '%s' "$(prompt_default "$prompt" "$default_model")"
@@ -406,6 +550,37 @@ process.stdin.on("end", () => {
   const seen = new Set();
   for (const model of sources) {
     const id = typeof model === "string" ? model : model && (model.id || model.slug || model.name);
+    if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
+      seen.add(id);
+      console.log(id);
+    }
+  }
+});
+' 2>/dev/null
+}
+
+discover_anthropic_models() {
+  local base_url="$1"
+  local api_key="${2:-}"
+  local models_url="${base_url%/}/v1/models"
+  local curl_args=(-H "anthropic-version: 2023-06-01")
+
+  need_cmd curl || return 1
+  need_cmd node || return 1
+
+  if [ -n "$api_key" ] && [ "$api_key" != "EMPTY" ]; then
+    curl_args+=(-H "x-api-key: ${api_key}")
+  fi
+
+  curl -fsS --connect-timeout 5 --max-time 5 "${curl_args[@]}" "$models_url" 2>/dev/null | node -e '
+const chunks = [];
+process.stdin.on("data", chunk => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!Array.isArray(payload.data)) return;
+  const seen = new Set();
+  for (const model of payload.data) {
+    const id = model && model.id;
     if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
       seen.add(id);
       console.log(id);
@@ -2390,7 +2565,7 @@ configure_codex_provider() {
     *)
       provider="minimax"
       provider_label="MiniMax"
-      [ "$current_provider" = "$provider" ] || default_model="MiniMax-M2.7"
+      [ "$current_provider" = "$provider" ] || default_model="MiniMax-M3"
       say "Choose MiniMax endpoint:"
       say "  1) China mainland: https://api.minimaxi.com/v1"
       say "  2) International:  https://api.minimax.io/v1"
@@ -2489,6 +2664,14 @@ die() {
   exit 1
 }
 
+warn() {
+  if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+    printf '\033[33mWarning: %s\033[0m\n' "$*" >&2
+  else
+    printf 'Warning: %s\n' "$*" >&2
+  fi
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -2571,6 +2754,40 @@ append_model_if_missing() {
   models_ref+=("$candidate")
 }
 
+merge_live_models_preserving_remote_order() {
+  local -n models_ref="$1"
+  shift
+  local candidate existing already
+  local batch=()
+
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    already=0
+    for existing in "${batch[@]}"; do
+      if [ "$existing" = "$candidate" ]; then
+        already=1
+        break
+      fi
+    done
+    [ "$already" = "0" ] && batch+=("$candidate")
+  done
+
+  for existing in "${models_ref[@]}"; do
+    already=0
+    for candidate in "${batch[@]}"; do
+      if [ "$candidate" = "$existing" ]; then
+        already=1
+        break
+      fi
+    done
+    [ "$already" = "0" ] && batch+=("$existing")
+  done
+
+  if [ "${#batch[@]}" -gt 0 ]; then
+    models_ref=("${batch[@]}")
+  fi
+}
+
 model_history_candidates() {
   local file="${1:-}"
   local provider="${2:-}"
@@ -2645,7 +2862,9 @@ claude_configured_models() {
 model_note() {
   local model="$1"
 
-  if [ "$model" = "MiniMax-M2.7" ]; then
+  if [ "$model" = "MiniMax-M3" ]; then
+    printf '%s' "recommended, 1M context"
+  elif [ "$model" = "MiniMax-M2.7" ]; then
     printf '%s' "recommended"
   elif [ "$model" = "MiniMax-M2.7-highspeed" ]; then
     printf '%s' "high-speed, separate quota"
@@ -2687,6 +2906,7 @@ select_model_menu() {
   case "${provider}:${kind}" in
     minimax:primary|minimax:small)
       models=(
+        "MiniMax-M3"
         "MiniMax-M2.7"
         "MiniMax-M2.7-highspeed"
         "MiniMax-M2.5"
@@ -2695,6 +2915,29 @@ select_model_menu() {
         "MiniMax-M2.1-highspeed"
         "MiniMax-M2"
       )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_anthropic_models >/dev/null && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_anthropic_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -z "$live_models" ]; then
+          live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        fi
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              MiniMax-M*|abab*) live_classified+=("$live_model") ;;
+              speech-*|voice-*) live_classified+=("${live_model} [speech]") ;;
+              image-*) live_classified+=("${live_model} [image]") ;;
+              music-*|lyrics-*) live_classified+=("${live_model} [music]") ;;
+              video-*|MiniMax-Hailuo*) live_classified+=("${live_model} [video]") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from MiniMax (using built-in list instead)"
+        fi
+      fi
       ;;
     deepseek:primary)
       models=(
@@ -2702,6 +2945,22 @@ select_model_menu() {
         "deepseek-v4-pro"
         "deepseek-v4-flash"
       )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              deepseek-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from DeepSeek (using built-in list instead)"
+        fi
+      fi
       ;;
     deepseek:small)
       models=(
@@ -2720,6 +2979,66 @@ select_model_menu() {
         "kimi-k2-0905-preview"
         "kimi-k2-0711-preview"
       )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              moonshot-*|kimi-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from Moonshot Kimi (using built-in list instead)"
+        fi
+      fi
+      ;;
+    zhipu:primary|zhipu:small)
+      models=(
+        "glm-5"
+        "glm-5-turbo"
+        "glm-5.1"
+      )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              glm-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from Zhipu GLM (using built-in list instead)"
+        fi
+      fi
+      ;;
+    mimo:primary|mimo:small)
+      models=(
+        "mimo-v2.5-pro"
+      )
+      if [ -n "${AGENT_ROUTER_PROVIDER_BASE_URL:-}" ] && declare -F discover_openai_models >/dev/null; then
+        live_models="$(discover_openai_models "$AGENT_ROUTER_PROVIDER_BASE_URL" "${AGENT_ROUTER_PROVIDER_API_KEY:-}" 2>/dev/null)"
+        if [ -n "$live_models" ]; then
+          live_classified=()
+          while IFS= read -r live_model; do
+            [ -n "$live_model" ] || continue
+            case "$live_model" in
+              mimo-*) live_classified+=("$live_model") ;;
+              *) live_classified+=("${live_model} [other]") ;;
+            esac
+          done <<< "$live_models"
+          merge_live_models_preserving_remote_order models "${live_classified[@]}"
+        else
+          warn "Could not fetch live model list from Xiaomi MiMo (using built-in list instead)"
+        fi
+      fi
       ;;
     *)
       printf '%s' "$(prompt_default "$prompt" "$default_model")"
@@ -2809,6 +3128,37 @@ process.stdin.on("end", () => {
   const seen = new Set();
   for (const model of sources) {
     const id = typeof model === "string" ? model : model && (model.id || model.slug || model.name);
+    if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
+      seen.add(id);
+      console.log(id);
+    }
+  }
+});
+' 2>/dev/null
+}
+
+discover_anthropic_models() {
+  local base_url="$1"
+  local api_key="${2:-}"
+  local models_url="${base_url%/}/v1/models"
+  local curl_args=(-H "anthropic-version: 2023-06-01")
+
+  need_cmd curl || return 1
+  need_cmd node || return 1
+
+  if [ -n "$api_key" ] && [ "$api_key" != "EMPTY" ]; then
+    curl_args+=(-H "x-api-key: ${api_key}")
+  fi
+
+  curl -fsS --connect-timeout 5 --max-time 5 "${curl_args[@]}" "$models_url" 2>/dev/null | node -e '
+const chunks = [];
+process.stdin.on("data", chunk => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!Array.isArray(payload.data)) return;
+  const seen = new Set();
+  for (const model of payload.data) {
+    const id = model && model.id;
     if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
       seen.add(id);
       console.log(id);
@@ -4399,7 +4749,7 @@ main() {
       provider="minimax"
       provider_label="MiniMax"
       auth_header="authorization"
-      default_model="MiniMax-M2.7"
+      default_model="MiniMax-M3"
       say "Choose MiniMax endpoint:"
       say "  1) China mainland: https://api.minimaxi.com/anthropic"
       say "  2) International:  https://api.minimax.io/anthropic"
@@ -4451,14 +4801,14 @@ main() {
   if [ "$api_format" = "openai-chat" ]; then
     model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_openai_model_from_base_url "$base_url" "$default_model" "$api_key")"
   else
-    model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "primary" "$default_model" "Primary model")"
+    model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_PROVIDER_BASE_URL="$base_url" AGENT_ROUTER_PROVIDER_API_KEY="$api_key" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "primary" "$default_model" "Primary model")"
   fi
 
   local small_model
   if [ "$api_format" = "openai-chat" ]; then
     small_model="$model"
   elif [ "$provider" = "deepseek" ]; then
-    small_model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "small" "$default_small_model" "Small/haiku model")"
+    small_model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_PROVIDER_BASE_URL="$base_url" AGENT_ROUTER_PROVIDER_API_KEY="$api_key" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "small" "$default_small_model" "Small/haiku model")"
   else
     small_model="$model"
   fi
@@ -4626,6 +4976,14 @@ die() {
   exit 1
 }
 
+warn() {
+  if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+    printf '\033[33mWarning: %s\033[0m\n' "$*" >&2
+  else
+    printf 'Warning: %s\n' "$*" >&2
+  fi
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -4706,6 +5064,40 @@ append_model_if_missing() {
     [ "$existing" = "$candidate" ] && return 0
   done
   models_ref+=("$candidate")
+}
+
+merge_live_models_preserving_remote_order() {
+  local -n models_ref="$1"
+  shift
+  local candidate existing already
+  local batch=()
+
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    already=0
+    for existing in "${batch[@]}"; do
+      if [ "$existing" = "$candidate" ]; then
+        already=1
+        break
+      fi
+    done
+    [ "$already" = "0" ] && batch+=("$candidate")
+  done
+
+  for existing in "${models_ref[@]}"; do
+    already=0
+    for candidate in "${batch[@]}"; do
+      if [ "$candidate" = "$existing" ]; then
+        already=1
+        break
+      fi
+    done
+    [ "$already" = "0" ] && batch+=("$existing")
+  done
+
+  if [ "${#batch[@]}" -gt 0 ]; then
+    models_ref=("${batch[@]}")
+  fi
 }
 
 model_history_candidates() {
@@ -4822,6 +5214,37 @@ process.stdin.on("end", () => {
   const seen = new Set();
   for (const model of sources) {
     const id = typeof model === "string" ? model : model && (model.id || model.slug || model.name);
+    if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
+      seen.add(id);
+      console.log(id);
+    }
+  }
+});
+' 2>/dev/null
+}
+
+discover_anthropic_models() {
+  local base_url="$1"
+  local api_key="${2:-}"
+  local models_url="${base_url%/}/v1/models"
+  local curl_args=(-H "anthropic-version: 2023-06-01")
+
+  need_cmd curl || return 1
+  need_cmd node || return 1
+
+  if [ -n "$api_key" ] && [ "$api_key" != "EMPTY" ]; then
+    curl_args+=(-H "x-api-key: ${api_key}")
+  fi
+
+  curl -fsS --connect-timeout 5 --max-time 5 "${curl_args[@]}" "$models_url" 2>/dev/null | node -e '
+const chunks = [];
+process.stdin.on("data", chunk => chunks.push(chunk));
+process.stdin.on("end", () => {
+  const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!Array.isArray(payload.data)) return;
+  const seen = new Set();
+  for (const model of payload.data) {
+    const id = model && model.id;
     if (typeof id === "string" && id.length > 0 && !seen.has(id)) {
       seen.add(id);
       console.log(id);
@@ -5363,7 +5786,7 @@ main() {
     *)
       provider="minimax"
       provider_label="MiniMax"
-      [ "$current_provider" = "$provider" ] || default_model="MiniMax-M2.7"
+      [ "$current_provider" = "$provider" ] || default_model="MiniMax-M3"
       say "Choose MiniMax endpoint:"
       say "  1) China mainland: https://api.minimaxi.com/v1"
       say "  2) International:  https://api.minimax.io/v1"
@@ -5516,7 +5939,7 @@ run_claude_setup() {
       provider="minimax"
       provider_label="MiniMax"
       auth_header="authorization"
-      default_model="MiniMax-M2.7"
+      default_model="MiniMax-M3"
       say "Choose MiniMax endpoint:"
       say "  1) China mainland: https://api.minimaxi.com/anthropic"
       say "  2) International:  https://api.minimax.io/anthropic"
@@ -5544,14 +5967,14 @@ run_claude_setup() {
   if [ "$api_format" = "openai-chat" ]; then
     model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_openai_model_from_base_url "$base_url" "$default_model" "$api_key")"
   else
-    model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "primary" "$default_model" "Primary model")"
+    model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_PROVIDER_BASE_URL="$base_url" AGENT_ROUTER_PROVIDER_API_KEY="$api_key" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "primary" "$default_model" "Primary model")"
   fi
 
   local small_model
   if [ "$api_format" = "openai-chat" ]; then
     small_model="$model"
   elif [ "$provider" = "deepseek" ]; then
-    small_model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "small" "$default_small_model" "Small/haiku model")"
+    small_model="$(AGENT_ROUTER_MODEL_HISTORY_FILE="$CLAUDE_MODEL_HISTORY" AGENT_ROUTER_MODEL_HISTORY_PROVIDER="$provider" AGENT_ROUTER_PROVIDER_BASE_URL="$base_url" AGENT_ROUTER_PROVIDER_API_KEY="$api_key" AGENT_ROUTER_INCLUDE_CLAUDE_CONFIG_HISTORY=1 select_model_menu "$provider" "small" "$default_small_model" "Small/haiku model")"
   else
     small_model="$model"
   fi
