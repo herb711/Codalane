@@ -48,6 +48,31 @@ warn() {
   fi
 }
 
+ensure_user_bin_in_path() {
+  local bin_dir="${USER_BIN_DIR:-${HOME}/.local/bin}"
+  local marker="# agent-router: add ${bin_dir} to PATH"
+  local needle="export PATH=\"${bin_dir}:\$PATH\""
+  local rc_file
+
+  for rc_file in "${HOME}/.profile" "${HOME}/.bashrc"; do
+    [ -d "$bin_dir" ] || return 0
+    [ -n "$rc_file" ] || continue
+    if [ -f "$rc_file" ] && grep -qF "$marker" "$rc_file"; then
+      continue
+    fi
+    if [ -f "$rc_file" ] && grep -qF "$bin_dir" "$rc_file"; then
+      continue
+    fi
+    {
+      printf '\n%s\n' "$marker"
+      printf 'if [ -d "%s" ] ; then\n' "$bin_dir"
+      printf '    %s\n' "$needle"
+      printf 'fi\n'
+    } >> "$rc_file"
+    say "Added ${bin_dir} to PATH in $rc_file (reload shell or run: source $rc_file)"
+  done
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
@@ -1876,7 +1901,7 @@ const server = http.createServer((req, res) => {
     const options = {
       hostname: upstream.hostname,
       port: upstream.port || (upstream.protocol === 'https:' ? 443 : 80),
-      path: upstreamPath('/models'),
+      path: upstreamPath('/v1/models'),
       method: 'GET',
       headers: authHeaders()
     };
@@ -2670,6 +2695,31 @@ warn() {
   else
     printf 'Warning: %s\n' "$*" >&2
   fi
+}
+
+ensure_user_bin_in_path() {
+  local bin_dir="${USER_BIN_DIR:-${HOME}/.local/bin}"
+  local marker="# agent-router: add ${bin_dir} to PATH"
+  local needle="export PATH=\"${bin_dir}:\$PATH\""
+  local rc_file
+
+  for rc_file in "${HOME}/.profile" "${HOME}/.bashrc"; do
+    [ -d "$bin_dir" ] || return 0
+    [ -n "$rc_file" ] || continue
+    if [ -f "$rc_file" ] && grep -qF "$marker" "$rc_file"; then
+      continue
+    fi
+    if [ -f "$rc_file" ] && grep -qF "$bin_dir" "$rc_file"; then
+      continue
+    fi
+    {
+      printf '\n%s\n' "$marker"
+      printf 'if [ -d "%s" ] ; then\n' "$bin_dir"
+      printf '    %s\n' "$needle"
+      printf 'fi\n'
+    } >> "$rc_file"
+    say "Added ${bin_dir} to PATH in $rc_file (reload shell or run: source $rc_file)"
+  done
 }
 
 need_cmd() {
@@ -4425,7 +4475,7 @@ const server = http.createServer((req, res) => {
     const options = {
       hostname: upstream.hostname,
       port: upstream.port || (upstream.protocol === 'https:' ? 443 : 80),
-      path: upstreamPath('/models'),
+      path: upstreamPath('/v1/models'),
       method: 'GET',
       headers: authHeaders()
     };
@@ -4945,6 +4995,7 @@ EOF_UNIFIED_SWITCHER
   remove_legacy_codex_switchers
   say "Installed unified provider switcher: $SWITCHER_BIN"
   say "Also available as: $SWITCHER_ALIAS"
+  ensure_user_bin_in_path
 }
 
 write_codex_switcher_command() {
@@ -4982,6 +5033,31 @@ warn() {
   else
     printf 'Warning: %s\n' "$*" >&2
   fi
+}
+
+ensure_user_bin_in_path() {
+  local bin_dir="${USER_BIN_DIR:-${HOME}/.local/bin}"
+  local marker="# agent-router: add ${bin_dir} to PATH"
+  local needle="export PATH=\"${bin_dir}:\$PATH\""
+  local rc_file
+
+  for rc_file in "${HOME}/.profile" "${HOME}/.bashrc"; do
+    [ -d "$bin_dir" ] || return 0
+    [ -n "$rc_file" ] || continue
+    if [ -f "$rc_file" ] && grep -qF "$marker" "$rc_file"; then
+      continue
+    fi
+    if [ -f "$rc_file" ] && grep -qF "$bin_dir" "$rc_file"; then
+      continue
+    fi
+    {
+      printf '\n%s\n' "$marker"
+      printf 'if [ -d "%s" ] ; then\n' "$bin_dir"
+      printf '    %s\n' "$needle"
+      printf 'fi\n'
+    } >> "$rc_file"
+    say "Added ${bin_dir} to PATH in $rc_file (reload shell or run: source $rc_file)"
+  done
 }
 
 need_cmd() {
